@@ -11,13 +11,16 @@
       display: flex;
       justify-content: center;
       align-items: center;
-      height: 100vh;
+      min-height: 100vh;
       margin: 0;
+      padding: 10px;
+      box-sizing: border-box;
     }
     .chat-container {
       width: 100%;
       max-width: 500px;
       height: 90vh;
+      min-height: 600px;
       background: #fff;
       display: flex;
       flex-direction: column;
@@ -62,6 +65,16 @@
       border-bottom-left-radius: 2px;
       box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
+    .error {
+      background: #ffebee;
+      border-left: 4px solid #f44336;
+      color: #d32f2f;
+    }
+    .loading {
+      background: #e3f2fd;
+      border-left: 4px solid #2196f3;
+      color: #1976d2;
+    }
     .chat-input {
       display: flex;
       padding: 10px;
@@ -75,6 +88,10 @@
       outline: none;
       font-size: 15px;
     }
+    .chat-input input:disabled {
+      background: #e0e0e0;
+      cursor: not-allowed;
+    }
     .chat-input button {
       margin-left: 8px;
       padding: 12px 18px;
@@ -85,35 +102,80 @@
       font-size: 16px;
       cursor: pointer;
       transition: 0.2s;
+      min-width: 45px;
     }
-    .chat-input button:hover {
+    .chat-input button:hover:not(:disabled) {
       background: #0b806f;
+    }
+    .chat-input button:disabled {
+      background: #bdbdbd;
+      cursor: not-allowed;
+    }
+    .status {
+      padding: 5px 15px;
+      font-size: 12px;
+      background: #e8f5e8;
+      border-bottom: 1px solid #ddd;
+      text-align: center;
+    }
+    .status.error {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+    .status.connecting {
+      background: #e3f2fd;
+      color: #1976d2;
     }
   </style>
 </head>
 <body>
   <div class="chat-container">
     <div class="chat-header">💬 Manual do Expositor - Imagineland 2025</div>
+    <div id="status" class="status">Pronto para conversar</div>
     <div id="chat" class="chat-box"></div>
     <div class="chat-input">
-      <input type="text" id="message" placeholder="Digite sua pergunta..." onkeypress="if(event.key==='Enter'){sendMessage()}">
-      <button onclick="sendMessage()">➤</button>
+      <input type="text" id="message" placeholder="Digite sua pergunta..." onkeypress="handleKeyPress(event)">
+      <button id="sendBtn" onclick="sendMessage()">➤</button>
     </div>
   </div>
 
   <script>
     const chatBox = document.getElementById("chat");
     const input = document.getElementById("message");
+    const sendBtn = document.getElementById("sendBtn");
+    const status = document.getElementById("status");
 
-    // Substitua pelo seu webhook final
+    // Webhook URL do N8N
     const webhookUrl = "https://vitrola-n8n.sshraj.easypanel.host/webhook/e036883a-6ac5-47fd-868c-7d5eeda0bc53/chat";
 
-    function addMessage(text, sender) {
+    let isLoading = false;
+
+    function updateStatus(message, type = 'normal') {
+      status.textContent = message;
+      status.className = `status ${type}`;
+    }
+
+    function addMessage(text, sender, extraClass = '') {
       const div = document.createElement("div");
       div.classList.add("msg", sender);
+      if (extraClass) div.classList.add(extraClass);
       div.textContent = text;
       chatBox.appendChild(div);
       chatBox.scrollTop = chatBox.scrollHeight;
+      return div;
+    }
+
+    function handleKeyPress(event) {
+      if (event.key === 'Enter' && !isLoading) {
+        sendMessage();
+      }
+    }
+
+    function setLoading(loading) {
+      isLoading = loading;
+      input.disabled = loading;
+      sendBtn.disabled = loading;
+      sendBtn.textContent = loading ? '⏳' : '➤';
     }
 
     // Mensagem inicial
@@ -121,30 +183,57 @@
 
     async function sendMessage() {
       const text = input.value.trim();
-      if (!text) return;
+      if (!text || isLoading) return;
 
       addMessage(text, "user");
       input.value = "";
+      
+      setLoading(true);
+      updateStatus("Processando sua pergunta...", "connecting");
+
+      // Adiciona mensagem de loading
+      const loadingMsg = addMessage("Processando...", "bot", "loading");
 
       try {
+        // Formato correto baseado nos logs do N8N
+        const payload = { chatInput: text };
+
         const res = await fetch(webhookUrl, {
           method: "POST",
-          mode: "cors", // evita bloqueio CORS
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: text })
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(payload)
         });
 
-        if (!res.ok) throw new Error("Erro na resposta do servidor");
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
 
         const data = await res.json();
-        let reply = data.reply || data.answer || data.result || "❌ Não consegui interpretar a resposta.";
+
+        // Remove mensagem de loading
+        chatBox.removeChild(loadingMsg);
+
+        // Extrai a resposta do formato do N8N Chat
+        let reply = data.output || 
+                   data.text || 
+                   data.chatResponse || 
+                   data.reply || 
+                   data.answer || 
+                   data.message ||
+                   "Resposta recebida mas formato não reconhecido";
+
         addMessage(reply, "bot");
+        updateStatus("Mensagem enviada com sucesso", "normal");
 
       } catch (err) {
-        addMessage("⚠️ Erro ao conectar com o servidor. Tente novamente mais tarde.", "bot");
-        console.error(err);
-      }
-    }
-  </script>
-</body>
-</html>
+        // Remove mensagem de loading se ainda existir
+        if (chatBox.contains(loadingMsg)) {
+          chatBox.removeChild(loadingMsg);
+        }
+
+        console.error("Erro detalhado:", err);
+        
+        let errorMsg = "⚠️ Erro ao conectar com o s
